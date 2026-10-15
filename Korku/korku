@@ -1,0 +1,1432 @@
+import json
+import math
+import random
+import sys
+from collections import deque
+from pathlib import Path
+
+WIDTH, HEIGHT = 960, 600
+FPS = 60
+TILE = 48
+FONT_NAME = "arial"
+HIGHSCORE_FILE = Path(__file__).with_name("korku_rekor.json")
+
+BGCOLOR = (9, 11, 18)
+WALL_COLOR = (32, 41, 55)
+WALL_INNER = (18, 23, 31)
+FLOOR_COLOR = (18, 25, 34)
+LIGHT_WALL_COLOR = (115, 127, 120)
+LIGHT_WALL_INNER = (151, 161, 152)
+LIGHT_FLOOR_COLOR = (211, 218, 207)
+LIGHT_BACKGROUND = (226, 231, 220)
+DOOR_COLOR = (92, 216, 152)
+DOOR_GLOW = (147, 255, 204)
+LOCKED_DOOR_COLOR = (190, 62, 70)
+KEY_COLOR = (255, 220, 110)
+PLAYER_COLOR = (131, 198, 255)
+ENEMY_COLOR = (190, 60, 74)
+TEXT_COLOR = (240, 244, 248)
+MUTED_COLOR = (146, 168, 190)
+ACCENT = (122, 245, 214)
+DANGER = (255, 120, 120)
+MIN_VISION_RADIUS = 120
+MAX_VISION_RADIUS = 360
+MAX_STAMINA = 100
+MIN_FOG_OPACITY = 60
+MAX_FOG_OPACITY = 255
+GRAPHICS_QUALITY_SCALE = {"Düşük": 0.4, "Orta": 0.7, "Yüksek": 1.0}
+
+MAZE = [
+    "###################",
+    "#........#.......#",
+    "#.###.#.#.#.###.#.#",
+    "#...#.#.#.#...#.#.#",
+    "###.#...#...#.#.#.#",
+    "#...###.###.#...#.#",
+    "#.###.....#.#.###.#",
+    "#...#.#.#.#...#...#",
+    "###.#.#.#.###.#.#.#",
+    "#...#...#...#.#...#",
+    "#.#####.###.#.###.#",
+    "#.............#...#",
+    "###################",
+]
+
+PLAYER_START = (1.5 * TILE, 1.5 * TILE)
+EXIT_POS = (11 * TILE, 11 * TILE)
+DIFFICULTY_SETTINGS = {
+    "Kolay": {"time": 110, "enemy_speed": 0.95, "enemy_count": 2, "required_keys": 2, "awareness": 210, "danger": 145, "chase_boost": 1.4},
+    "Normal": {"time": 90, "enemy_speed": 1.15, "enemy_count": 3, "required_keys": 3, "awareness": 260, "danger": 180, "chase_boost": 1.7},
+    "Zor": {"time": 70, "enemy_speed": 1.35, "enemy_count": 4, "required_keys": 4, "awareness": 340, "danger": 230, "chase_boost": 2.0},
+}
+
+SHOP_ITEMS = (
+    {"id": "lantern", "name": "Fener güçlendirmesi", "description": "Görüş alanını 40 piksel artırır.", "cost": 3},
+    {"id": "boots", "name": "Koşu botları", "description": "Hareket hızını 20 artırır.", "cost": 4},
+    {"id": "time", "name": "Ek süre", "description": "Sonraki bölüme 20 saniye ekler.", "cost": 2},
+)
+
+LEVELS = [
+    {
+        "name": "Bodrum",
+        "maze": MAZE,
+        "player_start": (1.5 * TILE, 1.5 * TILE),
+        "exit_pos": (11 * TILE, 11 * TILE),
+        "enemies": ((11, 1), (7, 9), (3, 5), (12, 3)),
+    },
+    {
+        "name": "Ayna Kanadı",
+        "maze": [row[::-1] for row in MAZE],
+        "player_start": (17.5 * TILE, 1.5 * TILE),
+        "exit_pos": (7 * TILE, 11 * TILE),
+        "enemies": ((7, 1), (11, 9), (15, 5), (6, 3)),
+    },
+    {
+        "name": "Alt Koridor",
+        "maze": list(reversed(MAZE)),
+        "player_start": (1.5 * TILE, 11.5 * TILE),
+        "exit_pos": (11 * TILE, 1 * TILE),
+        "enemies": ((11, 11), (7, 3), (3, 7), (12, 9)),
+    },
+    {
+        "name": "Kayıp Merdiven",
+        "maze": [
+            "###################",
+            "#........#.......#",
+            "#.###.##.#.###.#.#",
+            "#.#...#.#...#.#.#",
+            "#.#.#.#.###.#...#",
+            "#...#.....#.#.#.#",
+            "###.#####.#.#.#.#",
+            "#...#.....#...#.#",
+            "#.###.#####.###.#",
+            "#.....#...#.....#",
+            "#.###.#.#.#.###.#",
+            "#...#...#...#...#",
+            "###################",
+        ],
+        "player_start": (1.5 * TILE, 1.5 * TILE),
+        "exit_pos": (11 * TILE, 11 * TILE),
+        "enemies": ((10, 1), (4, 9), (12, 6), (7, 3)),
+    },
+    {
+        "name": "Son Sığınak",
+        "maze": [
+            "###################",
+            "#.................#",
+            "#.#####.###.#####.#",
+            "#.#...#...#...#.#.#",
+            "#.#.#.###.#.#.#.#.#",
+            "#...#...#.#.#...#.#",
+            "###.#.#.#.#.###.#.#",
+            "#...#.#...#...#...#",
+            "#.###.#####.###.#.#",
+            "#...#.....#.....#.#",
+            "#.#.#####.#.###.#.#",
+            "#...............#.#",
+            "###################",
+        ],
+        "player_start": (1.5 * TILE, 1.5 * TILE),
+        "exit_pos": (11 * TILE, 10 * TILE),
+        "enemies": ((12, 1), (8, 8), (3, 5), (10, 10)),
+    },
+]
+
+
+class Game:
+    def __init__(self):
+        pygame.init()
+        pygame.display.set_caption("Korku - Karanlık Kaçış")
+        self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
+        self.clock = pygame.time.Clock()
+        self.font = pygame.font.SysFont(FONT_NAME, 28)
+        self.small_font = pygame.font.SysFont(FONT_NAME, 20)
+        self.title_font = pygame.font.SysFont(FONT_NAME, 54, bold=True)
+
+        self.running = True
+        self.state = "menu"
+        self.settings_return_state = "menu"
+        self.platform = "PC"
+        self.difficulty = "Normal"
+        self.graphics_quality = "Yüksek"
+        self.dark_mode = True
+        self.practice_mode = False
+        self.vision_radius = 180
+        self.mobile_controls = {"up": False, "down": False, "left": False, "right": False, "sprint": False}
+        self.control_button_rects = {}
+        self.sprint_button_rect = pygame.Rect(0, 0, 90, 90)
+        self.setup_mobile_controls()
+        self.fog_opacity = MAX_FOG_OPACITY
+        self.dragging_vision = False
+        self.dragging_opacity = False
+        self.required_keys = 3
+        self.message_timer = 0
+        self.flash = 0.0
+        self.red_alert = 0.0
+        self.score = 0
+        self.paused = False
+        self.best_score = self.load_best_score()
+        self.reset_game()
+
+    def load_best_score(self):
+        try:
+            if HIGHSCORE_FILE.exists():
+                with HIGHSCORE_FILE.open("r", encoding="utf-8") as file:
+                    data = json.load(file)
+                    if isinstance(data, dict):
+                        return int(data.get("best_score", 0))
+        except (OSError, ValueError, json.JSONDecodeError):
+            pass
+        return 0
+
+    def save_best_score(self):
+        try:
+            with HIGHSCORE_FILE.open("w", encoding="utf-8") as file:
+                json.dump({"best_score": self.best_score}, file, ensure_ascii=False)
+        except OSError:
+            pass
+
+    def set_difficulty(self, difficulty):
+        if difficulty in DIFFICULTY_SETTINGS:
+            self.difficulty = difficulty
+            self.time_left = DIFFICULTY_SETTINGS[difficulty]["time"]
+            if self.state == "menu":
+                self.reset_game()
+
+    def reset_game(self):
+        self.level_number = 1
+        self.score = 0
+        self.coins = 0
+        self.player_speed = 150
+        self.next_level_bonus_time = 0
+        self.paused = False
+        self.load_level()
+
+    def find_open_tile_near(self, pixel_x, pixel_y):
+        start_tile_x = int(pixel_x // TILE)
+        start_tile_y = int(pixel_y // TILE)
+        max_radius = max(len(self.maze[0]), len(self.maze))
+
+        for radius in range(0, max_radius + 1):
+            for offset_y in range(-radius, radius + 1):
+                for offset_x in range(-radius, radius + 1):
+                    tile_x = start_tile_x + offset_x
+                    tile_y = start_tile_y + offset_y
+                    if not (0 <= tile_y < len(self.maze) and 0 <= tile_x < len(self.maze[tile_y])):
+                        continue
+                    if self.maze[tile_y][tile_x] == "#":
+                        continue
+                    return (
+                        tile_x * TILE + TILE // 2 - 11,
+                        tile_y * TILE + TILE // 2 - 11,
+                    )
+
+        return (pixel_x, pixel_y)
+
+    def load_level(self):
+        level = LEVELS[self.level_number - 1]
+        self.maze = level["maze"]
+        self.open_narrow_wall_blockers()
+        if self.level_number == 2:
+            self.open_second_level_blocker()
+        self.walls = []
+        self.keys = []
+        self.key_count = 0
+        self.message_timer = 0
+        self.flash = 0.0
+        self.red_alert = 0.0
+        self.stamina = MAX_STAMINA
+        self.time_left = DIFFICULTY_SETTINGS[self.difficulty]["time"] + self.next_level_bonus_time
+        self.next_level_bonus_time = 0
+
+        player_start = self.find_open_tile_near(*level["player_start"])
+        exit_pos = self.find_open_tile_near(*level["exit_pos"])
+        self.player = pygame.Rect(player_start[0], player_start[1], 22, 22)
+        self.exit_rect = pygame.Rect(exit_pos[0], exit_pos[1], TILE, TILE)
+
+        if self.practice_mode:
+            self.enemies = []
+        else:
+            enemy_count = DIFFICULTY_SETTINGS[self.difficulty]["enemy_count"]
+            enemy_spawns = level["enemies"][:enemy_count]
+            enemy_speeds = (60, 72, 82, 68)
+            enemy_types = ["octopus", "turtle", "lobster"]
+            self.enemies = []
+            for i, ((x, y), speed) in enumerate(zip(enemy_spawns, enemy_speeds[:enemy_count])):
+                kind = enemy_types[i % len(enemy_types)]
+                self.enemies.append(
+                    {
+                        "rect": pygame.Rect(x * TILE + 8, y * TILE + 8, 20, 20),
+                        "speed": speed * (1 + (self.level_number - 1) * 0.2),
+                        "kind": kind,
+                        "patrol_center": pygame.Vector2(x * TILE + TILE // 2, y * TILE + TILE // 2),
+                        "patrol_angle": (i * 1.4) % (math.pi * 2),
+                        "idle_timer": i * 0.7,
+                    }
+                )
+
+        for y, row in enumerate(self.maze):
+            for x, cell in enumerate(row):
+                if cell == "#":
+                    self.walls.append(pygame.Rect(x * TILE, y * TILE, TILE, TILE))
+
+        self.required_keys = DIFFICULTY_SETTINGS[self.difficulty]["required_keys"]
+        self.create_keys()
+
+    def open_narrow_wall_blockers(self):
+        """Oyuncunun sıkışmasına neden olan dar duvar boşluklarını açar."""
+        blockers = {
+            1: ((8, 3), (7, 3), (8, 4), (7, 4), (10, 7), (11, 7), (10, 8), (11, 8)),
+            2: ((9, 9), (10, 9), (11, 9), (10, 8), (11, 8), (10, 10), (11, 10)),
+            3: ((8, 3), (9, 3), (8, 4), (9, 4), (10, 8), (11, 8), (10, 9), (11, 9)),
+        }
+
+        for x, y in blockers.get(self.level_number, ()):
+            if 0 <= y < len(self.maze) and 0 <= x < len(self.maze[y]):
+                row = list(self.maze[y])
+                if row[x] == "#":
+                    row[x] = "."
+                    self.maze[y] = "".join(row)
+
+    def open_second_level_blocker(self):
+        """İkinci bölümde düşmanların yolu tıkayan kritik duvarı açar."""
+        if len(self.maze) > 9:
+            row = list(self.maze[9])
+            if len(row) > 10 and row[10] == "#":
+                row[10] = "."
+                self.maze[9] = "".join(row)
+
+    def create_keys(self):
+        start = (self.player.centerx // TILE, self.player.centery // TILE)
+        reachable = {start}
+        frontier = [start]
+
+        while frontier:
+            x, y = frontier.pop()
+            for next_x, next_y in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+                if (
+                    0 <= next_y < len(self.maze)
+                    and 0 <= next_x < len(self.maze[next_y])
+                    and self.maze[next_y][next_x] != "#"
+                    and (next_x, next_y) not in reachable
+                ):
+                    reachable.add((next_x, next_y))
+                    frontier.append((next_x, next_y))
+
+        excluded = {
+            start,
+            (self.exit_rect.centerx // TILE, self.exit_rect.centery // TILE),
+            *((enemy["rect"].centerx // TILE, enemy["rect"].centery // TILE) for enemy in self.enemies),
+        }
+        candidates = [
+            pygame.Rect(x * TILE + TILE // 2 - 10, y * TILE + TILE // 2 - 10, 20, 20)
+            for x, y in reachable
+            if (x, y) not in excluded
+        ]
+        key_count = min(self.required_keys, len(candidates))
+        self.keys = random.sample(candidates, key_count)
+
+    def collides_with_obstacle(self, rect):
+        if self.collides_with_wall(rect):
+            return True
+        return False
+
+    def collides_with_wall(self, rect):
+        return any(rect.colliderect(wall) for wall in self.walls)
+
+    def setup_mobile_controls(self):
+        base_x = 30
+        base_y = HEIGHT - 172
+        self.control_button_rects = {
+            "up": pygame.Rect(base_x + 60, base_y, 56, 56),
+            "left": pygame.Rect(base_x, base_y + 60, 56, 56),
+            "down": pygame.Rect(base_x + 60, base_y + 120, 56, 56),
+            "right": pygame.Rect(base_x + 120, base_y + 60, 56, 56),
+        }
+        self.sprint_button_rect = pygame.Rect(WIDTH - 120, HEIGHT - 120, 90, 90)
+
+    def handle_mobile_touch(self, pos, pressed):
+        for key, rect in self.control_button_rects.items():
+            if rect.collidepoint(pos):
+                self.mobile_controls[key] = pressed
+        if self.sprint_button_rect.collidepoint(pos):
+            self.mobile_controls["sprint"] = pressed
+
+    def start_game(self):
+        self.state = "playing"
+        self.reset_game()
+
+    def collect_keys(self):
+        for key in self.keys[:]:
+            if self.player.colliderect(key):
+                self.keys.remove(key)
+                self.key_count += 1
+                self.score += 100
+                self.coins += 1
+                self.message_timer = 1.2
+                self.flash = 0.25
+
+                if self.best_score < self.score:
+                    self.best_score = self.score
+                    self.save_best_score()
+
+    def handle_events(self):
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                self.running = False
+                return
+
+            if event.type == pygame.MOUSEBUTTONUP:
+                if self.state == "playing" and self.platform == "Mobil":
+                    for key in self.mobile_controls:
+                        self.mobile_controls[key] = False
+                self.dragging_vision = False
+                self.dragging_opacity = False
+                continue
+
+            if event.type == pygame.MOUSEMOTION and (self.dragging_vision or self.dragging_opacity):
+                if self.dragging_vision:
+                    self.set_vision_radius(event.pos[0])
+                if self.dragging_opacity:
+                    self.set_fog_opacity(event.pos[0])
+                continue
+
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if self.state == "playing" and self.platform == "Mobil":
+                    self.handle_mobile_touch(event.pos, True)
+                    continue
+                if self.state == "menu" and hasattr(self, "start_button_rect") and self.start_button_rect.collidepoint(event.pos):
+                    self.start_game()
+                    continue
+                if self.state == "menu" and hasattr(self, "settings_button_rect") and self.settings_button_rect.collidepoint(event.pos):
+                    self.settings_return_state = "menu"
+                    self.state = "settings"
+                    continue
+                if self.state == "menu":
+                    for mode, rect in self.menu_platform_buttons:
+                        if rect.collidepoint(event.pos):
+                            self.platform = mode
+                            break
+                if self.state == "settings":
+                    if hasattr(self, "settings_resume_rect") and self.settings_resume_rect.collidepoint(event.pos):
+                        self.state = self.settings_return_state if self.settings_return_state in ("playing", "paused", "menu") else "menu"
+                        if self.state == "playing":
+                            self.paused = False
+                        self.dragging_vision = False
+                        self.dragging_opacity = False
+                        continue
+                    if hasattr(self, "settings_menu_rect") and self.settings_menu_rect.collidepoint(event.pos):
+                        self.state = "menu"
+                        self.dragging_vision = False
+                        self.dragging_opacity = False
+                        continue
+                    if hasattr(self, "settings_exit_rect") and self.settings_exit_rect.collidepoint(event.pos):
+                        self.running = False
+                        continue
+                    if hasattr(self, "practice_toggle_rect") and self.practice_toggle_rect.collidepoint(event.pos):
+                        self.practice_mode = not self.practice_mode
+                        self.reset_game() if self.state == "menu" else self.load_level()
+                        continue
+                    for mode, rect in self.settings_mode_buttons:
+                        if rect.collidepoint(event.pos):
+                            self.dark_mode = mode == "KARANLIK"
+                            break
+                    for quality, rect in self.graphics_quality_buttons:
+                        if rect.collidepoint(event.pos):
+                            self.graphics_quality = quality
+                            break
+                    for difficulty, rect in self.settings_difficulty_buttons:
+                        if rect.collidepoint(event.pos):
+                            self.set_difficulty(difficulty)
+                            break
+                    for platform, rect in self.settings_platform_buttons:
+                        if rect.collidepoint(event.pos):
+                            self.platform = platform
+                            break
+                    if self.vision_slider_rect.collidepoint(event.pos):
+                        self.dragging_vision = True
+                        self.set_vision_radius(event.pos[0])
+                    if self.dark_mode and self.fog_opacity_slider_rect.collidepoint(event.pos):
+                        self.dragging_opacity = True
+                        self.set_fog_opacity(event.pos[0])
+                    continue
+                if self.state == "shop":
+                    if self.shop_continue_rect.collidepoint(event.pos):
+                        self.advance_to_next_level()
+                        continue
+                    for item_id, rect in self.shop_item_buttons:
+                        if rect.collidepoint(event.pos):
+                            self.purchase_shop_item(item_id)
+                            break
+                    continue
+                if self.state in ("win", "lose") and hasattr(self, "end_button_rect") and self.end_button_rect.collidepoint(event.pos):
+                    self.state = "menu"
+                    continue
+
+            if event.type != pygame.KEYDOWN:
+                continue
+
+            if self.state == "menu" and event.key in (pygame.K_RETURN, pygame.K_SPACE):
+                self.start_game()
+                continue
+
+            if self.state == "settings" and event.key == pygame.K_ESCAPE:
+                self.state = self.settings_return_state if self.settings_return_state in ("playing", "paused", "menu") else "menu"
+                if self.state == "playing":
+                    self.paused = False
+                self.dragging_vision = False
+                self.dragging_opacity = False
+                continue
+
+            if self.state == "playing" and event.key == pygame.K_ESCAPE:
+                self.settings_return_state = "playing"
+                self.state = "settings"
+                self.paused = True
+                self.dragging_vision = False
+                self.dragging_opacity = False
+                continue
+
+            if self.state == "paused" and event.key == pygame.K_ESCAPE:
+                self.settings_return_state = "paused"
+                self.state = "settings"
+                self.dragging_vision = False
+                self.dragging_opacity = False
+                continue
+
+            if self.state == "shop" and event.key in (pygame.K_RETURN, pygame.K_SPACE):
+                self.advance_to_next_level()
+                continue
+
+            if self.state == "paused" and event.key in (pygame.K_p, pygame.K_ESCAPE):
+                self.paused = False
+                self.state = "playing"
+                continue
+
+            if self.state in ("win", "lose") and event.key in (pygame.K_RETURN, pygame.K_SPACE, pygame.K_r):
+                self.state = "menu"
+                continue
+
+            if event.key == pygame.K_ESCAPE:
+                self.running = False
+                continue
+
+            if event.key == pygame.K_p and self.state == "playing":
+                self.paused = True
+                self.state = "paused"
+                continue
+
+            if event.key == pygame.K_1:
+                self.set_difficulty("Kolay")
+            elif event.key == pygame.K_2:
+                self.set_difficulty("Normal")
+            elif event.key == pygame.K_3:
+                self.set_difficulty("Zor")
+
+    def set_vision_radius(self, mouse_x):
+        slider = self.vision_slider_rect
+        ratio = max(0.0, min(1.0, (mouse_x - slider.left) / slider.width))
+        radius = MIN_VISION_RADIUS + ratio * (MAX_VISION_RADIUS - MIN_VISION_RADIUS)
+        self.vision_radius = round(radius / 10) * 10
+
+    def set_fog_opacity(self, mouse_x):
+        slider = self.fog_opacity_slider_rect
+        ratio = max(0.0, min(1.0, (mouse_x - slider.left) / slider.width))
+        opacity = MIN_FOG_OPACITY + ratio * (MAX_FOG_OPACITY - MIN_FOG_OPACITY)
+        self.fog_opacity = max(MIN_FOG_OPACITY, min(MAX_FOG_OPACITY, round(opacity / 5) * 5))
+
+    def purchase_shop_item(self, item_id):
+        item = next((item for item in SHOP_ITEMS if item["id"] == item_id), None)
+        if item is None:
+            return
+
+        if self.coins < item["cost"]:
+            self.shop_message = "Yeterli jetonun yok."
+            return
+
+        if item_id == "lantern" and self.vision_radius >= MAX_VISION_RADIUS:
+            self.shop_message = "Fenerin gücü zaten en yüksek seviyede."
+            return
+        if item_id == "boots" and self.player_speed >= 230:
+            self.shop_message = "Koşu botları en yüksek seviyede."
+            return
+
+        self.coins -= item["cost"]
+        if item_id == "lantern":
+            self.vision_radius = min(MAX_VISION_RADIUS, self.vision_radius + 40)
+            self.shop_message = "Fener güçlendirildi."
+        elif item_id == "boots":
+            self.player_speed = min(230, self.player_speed + 20)
+            self.shop_message = "Hareket hızın arttı."
+        else:
+            self.next_level_bonus_time += 20
+            self.shop_message = "Sonraki bölüme 20 saniye eklendi."
+
+    def advance_to_next_level(self):
+        self.level_number += 1
+        self.load_level()
+        self.state = "playing"
+
+    def move_player(self, dt):
+        dx = 0
+        dy = 0
+        keys = pygame.key.get_pressed()
+
+        if self.platform == "PC":
+            if keys[pygame.K_w] or keys[pygame.K_UP]:
+                dy -= 1
+            if keys[pygame.K_s] or keys[pygame.K_DOWN]:
+                dy += 1
+            if keys[pygame.K_a] or keys[pygame.K_LEFT]:
+                dx -= 1
+            if keys[pygame.K_d] or keys[pygame.K_RIGHT]:
+                dx += 1
+        else:
+            if self.mobile_controls["up"]:
+                dy -= 1
+            if self.mobile_controls["down"]:
+                dy += 1
+            if self.mobile_controls["left"]:
+                dx -= 1
+            if self.mobile_controls["right"]:
+                dx += 1
+
+        if dx != 0 or dy != 0:
+            length = math.hypot(dx, dy)
+            dx /= length
+            dy /= length
+
+        moving = dx != 0 or dy != 0
+        sprinting = moving and (
+            (self.platform == "PC" and (keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]))
+            or (self.platform == "Mobil" and self.mobile_controls["sprint"])
+        ) and self.stamina > 0
+        if sprinting:
+            speed = self.player_speed * 1.7
+            self.stamina = max(0, self.stamina - 38 * dt)
+        else:
+            speed = self.player_speed
+            self.stamina = min(MAX_STAMINA, self.stamina + 24 * dt)
+
+        next_x = self.player.move(dx * speed * dt, 0)
+        if not self.collides_with_obstacle(next_x):
+            self.player.x = next_x.x
+
+        next_y = self.player.move(0, dy * speed * dt)
+        if not self.collides_with_obstacle(next_y):
+            self.player.y = next_y.y
+
+        self.player.x = max(0, min(self.player.x, WIDTH - self.player.width))
+        self.player.y = max(0, min(self.player.y, HEIGHT - self.player.height))
+
+    def find_enemy_path(self, start, target):
+        start_tile = (start[0] // TILE, start[1] // TILE)
+        target_tile = (target[0] // TILE, target[1] // TILE)
+        frontier = deque([start_tile])
+        previous = {start_tile: None}
+
+        while frontier:
+            x, y = frontier.popleft()
+            if (x, y) == target_tile:
+                break
+
+            for next_tile in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+                next_x, next_y = next_tile
+                if (
+                    0 <= next_y < len(self.maze)
+                    and 0 <= next_x < len(self.maze[next_y])
+                    and self.maze[next_y][next_x] != "#"
+                    and next_tile not in previous
+                ):
+                    previous[next_tile] = (x, y)
+                    frontier.append(next_tile)
+
+        if target_tile not in previous:
+            return []
+
+        path = []
+        tile = target_tile
+        while previous[tile] is not None:
+            path.append(tile)
+            tile = previous[tile]
+        path.reverse()
+        return path
+
+    def move_enemies(self, dt):
+        if self.practice_mode:
+            return
+        difficulty = DIFFICULTY_SETTINGS[self.difficulty]
+        for enemy in self.enemies:
+            target = pygame.Vector2(self.player.centerx, self.player.centery)
+            current = pygame.Vector2(enemy["rect"].centerx, enemy["rect"].centery)
+            distance = target - current
+            danger = distance.length() < difficulty["danger"]
+
+            if danger:
+                self.red_alert = min(1.0, self.red_alert + dt * 3.5)
+            else:
+                self.red_alert = max(0.0, self.red_alert - dt * 2.0)
+
+            kind = enemy.get("kind", "octopus")
+            if distance.length() < difficulty["awareness"]:
+                if distance.length() > 0:
+                    if kind == "octopus":
+                        chase_speed = enemy["speed"] * (difficulty["chase_boost"] if danger else 1.05)
+                        path = self.find_enemy_path(
+                            (enemy["rect"].centerx, enemy["rect"].centery),
+                            (self.player.centerx, self.player.centery),
+                        )
+                        waypoint = target
+                        if path:
+                            tile_x, tile_y = path[0]
+                            waypoint = pygame.Vector2(tile_x * TILE + TILE // 2, tile_y * TILE + TILE // 2)
+                        drift = pygame.Vector2(math.cos(enemy["patrol_angle"]), math.sin(enemy["patrol_angle"])) * 18
+                        direction = (waypoint - current) + drift
+                        if direction.length() > 0:
+                            speed = chase_speed * difficulty["enemy_speed"]
+                            step = direction.normalize() * min(speed * dt, direction.length())
+                            next_x = enemy["rect"].move(step.x, 0)
+                            if not self.collides_with_obstacle(next_x):
+                                enemy["rect"].x = next_x.x
+                            next_y = enemy["rect"].move(0, step.y)
+                            if not self.collides_with_obstacle(next_y):
+                                enemy["rect"].y = next_y.y
+                            enemy["patrol_angle"] += dt * 1.8
+
+                    elif kind == "turtle":
+                        chase_speed = enemy["speed"] * (difficulty["chase_boost"] * 0.8 if danger else 0.7)
+                        direction = target - current
+                        if direction.length() > 0:
+                            speed = chase_speed * difficulty["enemy_speed"]
+                            step = direction.normalize() * min(speed * dt, direction.length())
+                            next_x = enemy["rect"].move(step.x * 0.75, 0)
+                            if not self.collides_with_obstacle(next_x):
+                                enemy["rect"].x = next_x.x
+                            next_y = enemy["rect"].move(0, step.y * 0.75)
+                            if not self.collides_with_obstacle(next_y):
+                                enemy["rect"].y = next_y.y
+                            enemy["patrol_angle"] += dt * 0.7
+
+                    elif kind == "lobster":
+                        chase_speed = enemy["speed"] * (difficulty["chase_boost"] * 1.4 if danger else 1.2)
+                        direction = target - current
+                        if direction.length() > 0:
+                            speed = chase_speed * difficulty["enemy_speed"]
+                            dash_rush = 1.2 if danger else 0.8
+                            step = direction.normalize() * min(speed * dash_rush * dt, direction.length())
+                            next_x = enemy["rect"].move(step.x, 0)
+                            if not self.collides_with_obstacle(next_x):
+                                enemy["rect"].x = next_x.x
+                            next_y = enemy["rect"].move(0, step.y)
+                            if not self.collides_with_obstacle(next_y):
+                                enemy["rect"].y = next_y.y
+
+            else:
+                if kind == "octopus":
+                    enemy["idle_timer"] += dt
+                    orbit = pygame.Vector2(
+                        math.cos(enemy["patrol_angle"]) * 28,
+                        math.sin(enemy["patrol_angle"] * 1.5) * 22,
+                    )
+                    target_pos = enemy["patrol_center"] + orbit
+                    move_dir = target_pos - current
+                    if move_dir.length() > 0:
+                        step = move_dir.normalize() * min(28 * dt, move_dir.length())
+                        next_x = enemy["rect"].move(step.x, 0)
+                        if not self.collides_with_obstacle(next_x):
+                            enemy["rect"].x = next_x.x
+                        next_y = enemy["rect"].move(0, step.y)
+                        if not self.collides_with_obstacle(next_y):
+                            enemy["rect"].y = next_y.y
+                    enemy["patrol_angle"] += dt * 0.9
+
+                elif kind == "turtle":
+                    enemy["idle_timer"] += dt
+                    patrol_offset = pygame.Vector2(
+                        math.cos(enemy["patrol_angle"]) * 52,
+                        math.sin(enemy["patrol_angle"]) * 52,
+                    )
+                    patrol_target = enemy["patrol_center"] + patrol_offset
+                    move_dir = patrol_target - current
+                    if move_dir.length() > 0:
+                        step = move_dir.normalize() * min(22 * dt, move_dir.length())
+                        next_x = enemy["rect"].move(step.x, 0)
+                        if not self.collides_with_obstacle(next_x):
+                            enemy["rect"].x = next_x.x
+                        next_y = enemy["rect"].move(0, step.y)
+                        if not self.collides_with_obstacle(next_y):
+                            enemy["rect"].y = next_y.y
+                    enemy["patrol_angle"] += dt * 0.6
+
+                elif kind == "lobster":
+                    enemy["idle_timer"] += dt
+                    side_step = pygame.Vector2(
+                        math.cos(enemy["patrol_angle"]) * 30,
+                        math.sin(enemy["patrol_angle"]) * 30,
+                    )
+                    move_dir = side_step
+                    if move_dir.length() > 0:
+                        step = move_dir.normalize() * min(36 * dt, move_dir.length())
+                        next_x = enemy["rect"].move(step.x, 0)
+                        if not self.collides_with_obstacle(next_x):
+                            enemy["rect"].x = next_x.x
+                        next_y = enemy["rect"].move(0, step.y)
+                        if not self.collides_with_obstacle(next_y):
+                            enemy["rect"].y = next_y.y
+                    enemy["patrol_angle"] += dt * 1.3
+
+            if self.player.colliderect(enemy["rect"]):
+                self.state = "lose"
+
+    def update(self, dt):
+        if self.state != "playing":
+            return
+
+        self.time_left -= dt
+        if self.graphics_quality != "Düşük" and self.flash > 0:
+            self.flash = max(0.0, self.flash - dt)
+        if self.graphics_quality != "Düşük" and self.red_alert > 0:
+            self.red_alert = max(0.0, self.red_alert - dt * 0.8)
+
+        if self.time_left <= 0:
+            self.state = "lose"
+            self._save_score_if_needed()
+            return
+
+        self.move_player(dt)
+        self.collect_keys()
+        self.move_enemies(dt)
+
+        if self.key_count >= self.required_keys and self.player.colliderect(self.exit_rect):
+            self.score += max(0, int(self.time_left * 10))
+            self._save_score_if_needed()
+            if self.level_number < len(LEVELS):
+                self.coins += 2
+                self.shop_message = "Bölüm ödülü: 2 jeton"
+                self.state = "shop"
+            else:
+                self.state = "win"
+
+    def _save_score_if_needed(self):
+        if self.score > self.best_score:
+            self.best_score = self.score
+            self.save_best_score()
+
+    def draw_key_icon(self, center):
+        x, y = center
+
+        ring_outer = (214, 175, 78)
+        ring_mid = (255, 214, 109)
+        ring_dark = (110, 81, 34)
+        shaft_dark = (78, 58, 26)
+
+        pygame.draw.circle(self.screen, ring_outer, (x, y), 12)
+        pygame.draw.circle(self.screen, ring_mid, (x, y), 9)
+        pygame.draw.circle(self.screen, ring_dark, (x, y), 7, 2)
+        pygame.draw.circle(self.screen, (255, 238, 170), (x, y), 3)
+
+        pygame.draw.rect(self.screen, ring_outer, (x - 3, y + 10, 6, 28), border_radius=3)
+        pygame.draw.rect(self.screen, shaft_dark, (x - 2, y + 14, 4, 22), border_radius=2)
+
+        pygame.draw.circle(self.screen, ring_outer, (x, y + 42), 6)
+        pygame.draw.circle(self.screen, ring_mid, (x, y + 42), 3)
+
+        tooth_points = [
+            (x - 11, y + 32),
+            (x - 6, y + 32),
+            (x - 3, y + 42),
+            (x - 8, y + 42),
+            (x - 11, y + 32),
+            (x - 1, y + 32),
+            (x + 4, y + 42),
+            (x - 1, y + 42),
+            (x + 9, y + 32),
+            (x + 14, y + 32),
+            (x + 11, y + 42),
+            (x + 6, y + 42),
+        ]
+        pygame.draw.polygon(self.screen, ring_outer, tooth_points)
+
+        pygame.draw.polygon(
+            self.screen,
+            ring_outer,
+            [(x - 1, y + 36), (x + 1, y + 36), (x + 5, y + 52), (x - 5, y + 52)],
+        )
+
+    def draw_player(self):
+        x, y, w, h = self.player
+        cx, cy = self.player.centerx, self.player.centery
+
+        body_color = (226, 96, 52)
+        shell_color = (239, 123, 61)
+        claw_color = (221, 93, 48)
+        eye_white = (255, 255, 255)
+        eye_dark = (28, 28, 28)
+        outline = (26, 18, 14)
+
+        pygame.draw.ellipse(self.screen, body_color, (x - 4, y - 2, w + 8, h + 6))
+        pygame.draw.ellipse(self.screen, shell_color, (x + 4, y + 4, w - 8, h - 8))
+        pygame.draw.rect(self.screen, body_color, (x + 4, y - 2, w - 8, 10), border_radius=5)
+
+        pygame.draw.arc(self.screen, outline, (x + 4, y + 8, w - 8, h - 14), 3.2, 6.1, 3)
+
+        pygame.draw.circle(self.screen, eye_white, (cx - 5, cy - 3), 5)
+        pygame.draw.circle(self.screen, eye_white, (cx + 5, cy - 3), 5)
+        pygame.draw.circle(self.screen, eye_dark, (cx - 5, cy - 3), 2)
+        pygame.draw.circle(self.screen, eye_dark, (cx + 5, cy - 3), 2)
+
+        pygame.draw.line(self.screen, outline, (cx - 10, cy + 7), (cx - 2, cy + 12), 3)
+        pygame.draw.line(self.screen, outline, (cx + 10, cy + 7), (cx + 2, cy + 12), 3)
+
+        claw_left = (x - 10, y + h // 2 - 4)
+        claw_right = (x + w + 10, y + h // 2 - 4)
+        pygame.draw.line(self.screen, claw_color, claw_left, (x - 22, y + 4), 8)
+        pygame.draw.line(self.screen, claw_color, claw_left, (x - 22, y + h - 4), 8)
+        pygame.draw.line(self.screen, claw_color, claw_right, (x + w + 22, y + 4), 8)
+        pygame.draw.line(self.screen, claw_color, claw_right, (x + w + 22, y + h - 4), 8)
+
+        pygame.draw.polygon(self.screen, claw_color, [(x - 2, y + h), (x + 4, y + h + 12), (x + 11, y + h), (x + 6, y + h - 4)])
+        pygame.draw.polygon(self.screen, claw_color, [(x + w - 2, y + h), (x + w - 4, y + h + 12), (x + w - 11, y + h), (x + w - 6, y + h - 4)])
+
+        pygame.draw.rect(self.screen, outline, (x + 6, y + 16, w - 12, 4), border_radius=2)
+
+    def draw_octopus_enemy(self, rect):
+        x, y, w, h = rect
+        cx, cy = rect.centerx, rect.centery
+
+        pygame.draw.ellipse(self.screen, (163, 92, 58), (x - 4, y - 2, w + 8, h + 8))
+        pygame.draw.ellipse(self.screen, (217, 143, 88), (x + 6, y + 6, w - 12, h - 12))
+
+        for i in range(8):
+            angle = i * 0.9
+            start_x = cx + math.cos(angle) * 18
+            start_y = cy + math.sin(angle) * 20
+            end_x = cx + math.cos(angle) * (35 + (i % 3) * 8)
+            end_y = cy + math.sin(angle) * (38 + (i % 3) * 8)
+            pygame.draw.line(self.screen, (180, 110, 74), (start_x, start_y), (end_x, end_y), 5)
+            for step in range(6):
+                px = start_x + (end_x - start_x) * (step / 6)
+                py = start_y + (end_y - start_y) * (step / 6)
+                pygame.draw.circle(self.screen, (246, 209, 148), (int(px), int(py)), 6)
+
+        pygame.draw.circle(self.screen, (255, 255, 255), (cx - 5, cy - 3), 5)
+        pygame.draw.circle(self.screen, (255, 255, 255), (cx + 5, cy - 3), 5)
+        pygame.draw.circle(self.screen, (18, 18, 18), (cx - 5, cy - 3), 2)
+        pygame.draw.circle(self.screen, (18, 18, 18), (cx + 5, cy - 3), 2)
+        pygame.draw.arc(self.screen, (50, 30, 20), (x + 6, y + 8, w - 12, h - 12), 0.5, 2.7, 3)
+
+    def draw_turtle_enemy(self, rect):
+        x, y, w, h = rect
+        cx, cy = rect.centerx, rect.centery
+
+        pygame.draw.ellipse(self.screen, (76, 106, 64), (x - 2, y - 2, w + 4, h + 4))
+        pygame.draw.ellipse(self.screen, (119, 168, 93), (x + 4, y + 5, w - 8, h - 8))
+        pygame.draw.ellipse(self.screen, (64, 91, 53), (x + 8, y + 12, w - 16, h - 20))
+
+        for px in range(4):
+            offset = 12 + px * 8
+            pygame.draw.circle(self.screen, (92, 127, 76), (x + offset, y + h // 2), 7)
+            pygame.draw.circle(self.screen, (92, 127, 76), (x + w - offset, y + h // 2), 7)
+
+        pygame.draw.circle(self.screen, (255, 255, 255), (cx - 5, cy - 6), 4)
+        pygame.draw.circle(self.screen, (255, 255, 255), (cx + 5, cy - 6), 4)
+        pygame.draw.circle(self.screen, (16, 18, 20), (cx - 5, cy - 6), 2)
+        pygame.draw.circle(self.screen, (16, 18, 20), (cx + 5, cy - 6), 2)
+        pygame.draw.arc(self.screen, (24, 36, 22), (x + 4, y + 10, w - 8, h - 12), 2.8, 5.8, 3)
+
+    def draw_lobster_enemy(self, rect):
+        x, y, w, h = rect
+        cx, cy = rect.centerx, rect.centery
+
+        pygame.draw.ellipse(self.screen, (190, 36, 18), (x - 4, y - 2, w + 8, h + 8))
+        pygame.draw.ellipse(self.screen, (235, 79, 34), (x + 2, y + 4, w - 4, h - 8))
+        pygame.draw.ellipse(self.screen, (214, 60, 24), (x + 8, y + 10, w - 16, h - 20))
+
+        pygame.draw.line(self.screen, (200, 52, 25), (x - 4, cy), (x - 28, cy - 20), 8)
+        pygame.draw.line(self.screen, (200, 52, 25), (x - 2, cy + 8), (x - 30, cy + 28), 8)
+        pygame.draw.line(self.screen, (200, 52, 25), (x + w + 4, cy), (x + w + 26, cy - 20), 8)
+        pygame.draw.line(self.screen, (200, 52, 25), (x + w + 2, cy + 8), (x + w + 30, cy + 28), 8)
+
+        for i in range(6):
+            leg_x = x + (w * (i + 1) / 7)
+            pygame.draw.line(self.screen, (180, 48, 18), (leg_x, y + h - 6), (leg_x - 20, y + h + 24), 5)
+            pygame.draw.line(self.screen, (180, 48, 18), (leg_x, y + h - 6), (leg_x + 20, y + h + 24), 5)
+
+        pygame.draw.circle(self.screen, (255, 255, 255), (cx - 6, cy - 2), 5)
+        pygame.draw.circle(self.screen, (255, 255, 255), (cx + 6, cy - 2), 5)
+        pygame.draw.circle(self.screen, (18, 18, 18), (cx - 6, cy - 2), 2)
+        pygame.draw.circle(self.screen, (18, 18, 18), (cx + 6, cy - 2), 2)
+        pygame.draw.arc(self.screen, (60, 10, 10), (x + 5, y + 8, w - 10, h - 16), 3.3, 6.0, 3)
+
+    def draw_enemy(self, enemy):
+        kind = enemy.get("kind", "octopus")
+        if kind == "turtle":
+            self.draw_turtle_enemy(enemy["rect"])
+        elif kind == "lobster":
+            self.draw_lobster_enemy(enemy["rect"])
+        else:
+            self.draw_octopus_enemy(enemy["rect"])
+
+    def draw_background(self):
+        if self.dark_mode:
+            background_color = BGCOLOR
+            wall_color = WALL_COLOR
+            wall_inner_color = WALL_INNER
+            floor_color = FLOOR_COLOR
+        else:
+            background_color = LIGHT_BACKGROUND
+            wall_color = LIGHT_WALL_COLOR
+            wall_inner_color = LIGHT_WALL_INNER
+            floor_color = LIGHT_FLOOR_COLOR
+
+        self.screen.fill(background_color)
+
+        for y, row in enumerate(self.maze):
+            for x, cell in enumerate(row):
+                rect = pygame.Rect(x * TILE, y * TILE, TILE, TILE)
+                if cell == "#":
+                    pygame.draw.rect(self.screen, wall_color, rect)
+                    pygame.draw.rect(self.screen, wall_inner_color, rect.inflate(-8, -8))
+                else:
+                    pygame.draw.rect(self.screen, floor_color, rect)
+
+        door_color = DOOR_GLOW if self.key_count >= self.required_keys else LOCKED_DOOR_COLOR
+        pygame.draw.rect(self.screen, door_color, self.exit_rect)
+        pygame.draw.rect(self.screen, (20, 20, 20), self.exit_rect.inflate(-10, -10), 2)
+
+        for key in self.keys:
+            if self.dark_mode:
+                dx = key.centerx - self.player.centerx
+                dy = key.centery - self.player.centery
+                if dx * dx + dy * dy > self.vision_radius * self.vision_radius:
+                    continue
+            self.draw_key_icon(key.center)
+
+        if not self.practice_mode:
+            for enemy in self.enemies:
+                self.draw_enemy(enemy)
+
+        self.draw_player()
+
+        if self.flash > 0:
+            pulse = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+            pulse.fill((255, 255, 255, int(80 * self.flash / 0.25)))
+            self.screen.blit(pulse, (0, 0))
+
+        if self.red_alert > 0:
+            danger_overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+            alpha = int(90 * self.red_alert)
+            danger_overlay.fill((180, 20, 30, alpha))
+            self.screen.blit(danger_overlay, (0, 0))
+
+    def draw_fog(self):
+        quality_scale = GRAPHICS_QUALITY_SCALE[self.graphics_quality]
+        fog_size = (max(1, round(WIDTH * quality_scale)), max(1, round(HEIGHT * quality_scale)))
+        fog = pygame.Surface(fog_size, pygame.SRCALPHA)
+        fog.fill((4, 5, 8, self.fog_opacity))
+        light_center = (round(self.player.centerx * quality_scale), round(self.player.centery * quality_scale))
+        light_radius = max(1, round(self.vision_radius * quality_scale))
+        pygame.draw.circle(fog, (4, 5, 8, 0), light_center, light_radius)
+        if fog.get_size() != (WIDTH, HEIGHT):
+            fog = pygame.transform.scale(fog, (WIDTH, HEIGHT))
+        self.screen.blit(fog, (0, 0))
+
+    def draw_hud(self):
+        label = self.font.render(f"Anahtar: {self.key_count}/{self.required_keys}", True, TEXT_COLOR)
+        self.screen.blit(label, (20, 16))
+
+        score = self.font.render(f"Puan: {self.score}", True, ACCENT)
+        self.screen.blit(score, (20, 50))
+
+        best = self.small_font.render(f"Rekor: {self.best_score}", True, MUTED_COLOR)
+        self.screen.blit(best, (20, 82))
+
+        coins = self.small_font.render(f"Jeton: {self.coins}", True, KEY_COLOR)
+        self.screen.blit(coins, (20, 108))
+
+        stamina_label = self.small_font.render("Dayanıklılık", True, MUTED_COLOR)
+        self.screen.blit(stamina_label, (20, 132))
+        stamina_rect = pygame.Rect(20, 156, 160, 12)
+        pygame.draw.rect(self.screen, (35, 42, 50), stamina_rect, border_radius=5)
+        stamina_width = int(stamina_rect.width * self.stamina / MAX_STAMINA)
+        stamina_color = DANGER if self.stamina < 25 else ACCENT
+        if stamina_width > 0:
+            pygame.draw.rect(
+                self.screen,
+                stamina_color,
+                (stamina_rect.x, stamina_rect.y, stamina_width, stamina_rect.height),
+                border_radius=5,
+            )
+
+        timer_color = (255, 209, 102) if self.time_left > 15 else DANGER
+        timer = self.font.render(f"Kalan süre: {max(0, int(self.time_left))} sn", True, timer_color)
+        self.screen.blit(timer, (WIDTH - 220, 16))
+
+        difficulty = self.font.render(f"Zorluk: {self.difficulty}", True, MUTED_COLOR)
+        self.screen.blit(difficulty, (WIDTH - 220, 50))
+
+        level_name = LEVELS[self.level_number - 1]["name"]
+        stage = self.small_font.render(
+            f"Bölüm {self.level_number}/{len(LEVELS)}: {level_name}", True, ACCENT
+        )
+        self.screen.blit(stage, (WIDTH // 2 - stage.get_width() // 2, 16))
+
+        mission = self.small_font.render("Görev: Tüm anahtarları topla ve kapıdan kaç!", True, TEXT_COLOR)
+        self.screen.blit(mission, (WIDTH // 2 - mission.get_width() // 2, HEIGHT - 32))
+
+        if self.key_count >= self.required_keys:
+            exit_hint = self.small_font.render("Kapı açık! Çıkışa ulaş!", True, DOOR_GLOW)
+            self.screen.blit(exit_hint, (WIDTH // 2 - exit_hint.get_width() // 2, HEIGHT - 60))
+
+        if not self.practice_mode and self.red_alert > 0.3:
+            danger = self.font.render("TEHLİKE! Düşman çok yakın!", True, (255, 110, 110))
+            self.screen.blit(danger, (WIDTH // 2 - danger.get_width() // 2, 110))
+
+        if self.message_timer > 0:
+            msg = self.small_font.render("Anahtar toplandı!", True, ACCENT)
+            self.screen.blit(msg, (WIDTH // 2 - 90, HEIGHT - 58))
+            self.message_timer -= self.clock.get_time() / 1000.0
+
+    def draw_menu(self):
+        self.screen.fill((6, 8, 14))
+
+        title = self.title_font.render("KORKU", True, TEXT_COLOR)
+        subtitle = self.font.render("Karanlık koridorda kaçış yolu bul!", True, MUTED_COLOR)
+        hint = self.small_font.render("WASD / ok tuşları: hareket • Shift: koş • Enter: başla", True, TEXT_COLOR)
+        self.screen.blit(title, (WIDTH // 2 - title.get_width() // 2, 110))
+        self.screen.blit(subtitle, (WIDTH // 2 - subtitle.get_width() // 2, 190))
+        self.screen.blit(hint, (WIDTH // 2 - hint.get_width() // 2, 250))
+
+        self.menu_platform_buttons = []
+        for index, platform in enumerate(("PC", "Mobil")):
+            rect = pygame.Rect(250 + index * 220, 290, 180, 62)
+            selected = self.platform == platform
+            pygame.draw.rect(self.screen, (23, 31, 42), rect, border_radius=12)
+            pygame.draw.rect(self.screen, ACCENT if selected else MUTED_COLOR, rect, 2, border_radius=12)
+            label = self.small_font.render(platform, True, TEXT_COLOR)
+            self.screen.blit(label, (rect.centerx - label.get_width() // 2, rect.centery - label.get_height() // 2))
+            self.menu_platform_buttons.append((platform, rect))
+
+        self.start_button_rect = pygame.Rect(255, 370, 210, 68)
+        pygame.draw.rect(self.screen, (23, 31, 42), self.start_button_rect, border_radius=12)
+        pygame.draw.rect(self.screen, ACCENT, self.start_button_rect, 2, border_radius=12)
+        start = self.font.render("BAŞLA", True, TEXT_COLOR)
+        self.screen.blit(start, (self.start_button_rect.centerx - start.get_width() // 2, self.start_button_rect.centery - start.get_height() // 2))
+
+        self.settings_button_rect = pygame.Rect(495, 370, 210, 68)
+        pygame.draw.rect(self.screen, (23, 31, 42), self.settings_button_rect, border_radius=12)
+        pygame.draw.rect(self.screen, MUTED_COLOR, self.settings_button_rect, 2, border_radius=12)
+        settings = self.font.render("AYARLAR", True, TEXT_COLOR)
+        self.screen.blit(settings, (self.settings_button_rect.centerx - settings.get_width() // 2, self.settings_button_rect.centery - settings.get_height() // 2))
+
+        info = self.small_font.render("1-Kolay  •  2-Normal  •  3-Zor", True, MUTED_COLOR)
+        self.screen.blit(info, (WIDTH // 2 - info.get_width() // 2, 470))
+
+        stages = self.small_font.render("5 bölüm: Bodrum • Ayna Kanadı • Alt Koridor • Kayıp Merdiven • Son Sığınak", True, ACCENT)
+        self.screen.blit(stages, (WIDTH // 2 - stages.get_width() // 2, 500))
+
+        record = self.small_font.render(f"Rekor: {self.best_score}", True, ACCENT)
+        self.screen.blit(record, (WIDTH // 2 - record.get_width() // 2, 530))
+
+    def draw_settings(self):
+        self.screen.fill((6, 8, 14))
+
+        title = self.title_font.render("AYARLAR", True, TEXT_COLOR)
+        self.screen.blit(title, (WIDTH // 2 - title.get_width() // 2, 20))
+
+        self.practice_toggle_rect = pygame.Rect(280, 70, 400, 52)
+        pygame.draw.rect(self.screen, (23, 31, 42), self.practice_toggle_rect, border_radius=10)
+        pygame.draw.rect(
+            self.screen,
+            ACCENT if self.practice_mode else MUTED_COLOR,
+            self.practice_toggle_rect,
+            2,
+            border_radius=10,
+        )
+        practice_text = self.small_font.render(
+            f"Pratik mod: {'AÇIK' if self.practice_mode else 'KAPALI'}",
+            True,
+            TEXT_COLOR,
+        )
+        self.screen.blit(
+            practice_text,
+            (self.practice_toggle_rect.centerx - practice_text.get_width() // 2, self.practice_toggle_rect.centery - practice_text.get_height() // 2),
+        )
+
+        mode_label = self.font.render("Işık modu", True, TEXT_COLOR)
+        self.screen.blit(mode_label, (WIDTH // 2 - mode_label.get_width() // 2, 140))
+
+        self.settings_mode_buttons = []
+        for mode, index in (("KARANLIK", 0), ("AYDINLIK", 1)):
+            rect = pygame.Rect(255 + index * 240, 170, 210, 44)
+            selected = self.dark_mode == (mode == "KARANLIK")
+            pygame.draw.rect(self.screen, (23, 31, 42), rect, border_radius=8)
+            pygame.draw.rect(self.screen, ACCENT if selected else MUTED_COLOR, rect, 2, border_radius=8)
+            label = self.small_font.render(mode, True, TEXT_COLOR)
+            self.screen.blit(label, (rect.centerx - label.get_width() // 2, rect.centery - label.get_height() // 2))
+            self.settings_mode_buttons.append((mode, rect))
+
+        quality_label = self.font.render("Grafik kalitesi", True, TEXT_COLOR)
+        self.screen.blit(quality_label, (WIDTH // 2 - quality_label.get_width() // 2, 230))
+
+        self.graphics_quality_buttons = []
+        for index, quality in enumerate(GRAPHICS_QUALITY_SCALE):
+            rect = pygame.Rect(170 + index * 210, 260, 190, 44)
+            selected = quality == self.graphics_quality
+            pygame.draw.rect(self.screen, (23, 31, 42), rect, border_radius=8)
+            pygame.draw.rect(self.screen, ACCENT if selected else MUTED_COLOR, rect, 2, border_radius=8)
+            label = self.small_font.render(quality, True, TEXT_COLOR)
+            self.screen.blit(label, (rect.centerx - label.get_width() // 2, rect.centery - label.get_height() // 2))
+            self.graphics_quality_buttons.append((quality, rect))
+
+        difficulty_label = self.font.render("Zorluk", True, TEXT_COLOR)
+        self.screen.blit(difficulty_label, (WIDTH // 2 - difficulty_label.get_width() // 2, 320))
+
+        self.settings_difficulty_buttons = []
+        for index, difficulty in enumerate(DIFFICULTY_SETTINGS):
+            rect = pygame.Rect(170 + index * 210, 350, 190, 44)
+            selected = difficulty == self.difficulty
+            pygame.draw.rect(self.screen, (23, 31, 42), rect, border_radius=8)
+            pygame.draw.rect(self.screen, ACCENT if selected else MUTED_COLOR, rect, 2, border_radius=8)
+            label = self.small_font.render(difficulty, True, TEXT_COLOR)
+            self.screen.blit(label, (rect.centerx - label.get_width() // 2, rect.centery - label.get_height() // 2))
+            self.settings_difficulty_buttons.append((difficulty, rect))
+
+        self.settings_platform_buttons = []
+        platform_label = self.font.render("Kontrol tipi", True, TEXT_COLOR)
+        self.screen.blit(platform_label, (WIDTH // 2 - platform_label.get_width() // 2, 395))
+        for index, platform in enumerate(("PC", "Mobil")):
+            rect = pygame.Rect(260 + index * 220, 425, 170, 42)
+            selected = self.platform == platform
+            pygame.draw.rect(self.screen, (23, 31, 42), rect, border_radius=8)
+            pygame.draw.rect(self.screen, ACCENT if selected else MUTED_COLOR, rect, 2, border_radius=8)
+            label = self.small_font.render(platform, True, TEXT_COLOR)
+            self.screen.blit(label, (rect.centerx - label.get_width() // 2, rect.centery - label.get_height() // 2))
+            self.settings_platform_buttons.append((platform, rect))
+
+        vision_label = self.font.render("Fener görüş mesafesi", True, TEXT_COLOR)
+        self.screen.blit(vision_label, (WIDTH // 2 - vision_label.get_width() // 2, 480))
+
+        self.vision_slider_rect = pygame.Rect(280, 510, 400, 18)
+        slider_y = self.vision_slider_rect.centery
+        pygame.draw.line(self.screen, MUTED_COLOR, (self.vision_slider_rect.left, slider_y), (self.vision_slider_rect.right, slider_y), 6)
+        ratio = (self.vision_radius - MIN_VISION_RADIUS) / (MAX_VISION_RADIUS - MIN_VISION_RADIUS)
+        knob_x = self.vision_slider_rect.left + int(ratio * self.vision_slider_rect.width)
+        pygame.draw.line(self.screen, ACCENT, (self.vision_slider_rect.left, slider_y), (knob_x, slider_y), 6)
+        pygame.draw.circle(self.screen, TEXT_COLOR, (knob_x, slider_y), 9)
+
+        radius_label = self.small_font.render(f"{self.vision_radius} piksel", True, ACCENT)
+        self.screen.blit(radius_label, (WIDTH // 2 - radius_label.get_width() // 2, 536))
+
+        opacity_percent = round(self.fog_opacity * 100 / MAX_FOG_OPACITY)
+        opacity_text = (
+            f"Karanlık opaklığı: {opacity_percent}%"
+            if self.dark_mode
+            else "Karanlık opaklığı: Aydınlık modda kapalı"
+        )
+        opacity_label = self.font.render(opacity_text, True, TEXT_COLOR)
+        self.screen.blit(opacity_label, (WIDTH // 2 - opacity_label.get_width() // 2, 560))
+
+        self.fog_opacity_slider_rect = pygame.Rect(280, 585, 400, 18)
+        opacity_slider_color = ACCENT if self.dark_mode else MUTED_COLOR
+        opacity_slider_y = self.fog_opacity_slider_rect.centery
+        pygame.draw.line(
+            self.screen,
+            MUTED_COLOR,
+            (self.fog_opacity_slider_rect.left, opacity_slider_y),
+            (self.fog_opacity_slider_rect.right, opacity_slider_y),
+            6,
+        )
+        opacity_ratio = (self.fog_opacity - MIN_FOG_OPACITY) / (MAX_FOG_OPACITY - MIN_FOG_OPACITY)
+        opacity_knob_x = self.fog_opacity_slider_rect.left + int(opacity_ratio * self.fog_opacity_slider_rect.width)
+        pygame.draw.line(
+            self.screen,
+            opacity_slider_color,
+            (self.fog_opacity_slider_rect.left, opacity_slider_y),
+            (opacity_knob_x, opacity_slider_y),
+            6,
+        )
+        pygame.draw.circle(self.screen, TEXT_COLOR, (opacity_knob_x, opacity_slider_y), 9)
+
+        self.settings_resume_rect = pygame.Rect(70, 540, 200, 36)
+        self.settings_menu_rect = pygame.Rect(320, 540, 200, 36)
+        self.settings_exit_rect = pygame.Rect(570, 540, 200, 36)
+
+        for rect, label in (
+            (self.settings_resume_rect, "OYUNA DÖN"),
+            (self.settings_menu_rect, "MENÜYE DÖN"),
+            (self.settings_exit_rect, "ÇIKIŞ"),
+        ):
+            pygame.draw.rect(self.screen, (23, 31, 42), rect, border_radius=8)
+            pygame.draw.rect(self.screen, ACCENT if rect == self.settings_resume_rect else MUTED_COLOR, rect, 2, border_radius=8)
+            text = self.small_font.render(label, True, TEXT_COLOR)
+            self.screen.blit(text, (rect.centerx - text.get_width() // 2, rect.centery - text.get_height() // 2))
+
+    def draw_shop(self):
+        self.screen.fill((6, 8, 14))
+
+        title = self.title_font.render("DÜKKAN", True, TEXT_COLOR)
+        self.screen.blit(title, (WIDTH // 2 - title.get_width() // 2, 35))
+
+        next_level = LEVELS[self.level_number]["name"]
+        subtitle = self.font.render(f"Sonraki bölüm: {next_level}", True, MUTED_COLOR)
+        self.screen.blit(subtitle, (WIDTH // 2 - subtitle.get_width() // 2, 105))
+
+        coins = self.font.render(f"Jeton: {self.coins}", True, KEY_COLOR)
+        self.screen.blit(coins, (WIDTH // 2 - coins.get_width() // 2, 140))
+
+        self.shop_item_buttons = []
+        for index, item in enumerate(SHOP_ITEMS):
+            row = pygame.Rect(120, 180 + index * 92, 720, 78)
+            pygame.draw.rect(self.screen, (18, 24, 33), row, border_radius=8)
+
+            name = self.font.render(item["name"], True, TEXT_COLOR)
+            description = self.small_font.render(item["description"], True, MUTED_COLOR)
+            self.screen.blit(name, (145, row.y + 10))
+            self.screen.blit(description, (145, row.y + 44))
+
+            button = pygame.Rect(680, row.y + 12, 135, 54)
+            maxed = (item["id"] == "lantern" and self.vision_radius >= MAX_VISION_RADIUS) or (
+                item["id"] == "boots" and self.player_speed >= 230
+            )
+            button_text = "MAKSİMUM" if maxed else f"AL  {item['cost']} jeton"
+            button_color = MUTED_COLOR if maxed or self.coins < item["cost"] else ACCENT
+            pygame.draw.rect(self.screen, (23, 31, 42), button, border_radius=8)
+            pygame.draw.rect(self.screen, button_color, button, 2, border_radius=8)
+            label = self.small_font.render(button_text, True, TEXT_COLOR)
+            self.screen.blit(label, (button.centerx - label.get_width() // 2, button.centery - label.get_height() // 2))
+            self.shop_item_buttons.append((item["id"], button))
+
+        message = self.small_font.render(self.shop_message, True, ACCENT)
+        self.screen.blit(message, (WIDTH // 2 - message.get_width() // 2, 465))
+
+        self.shop_continue_rect = pygame.Rect(330, 510, 300, 58)
+        pygame.draw.rect(self.screen, (23, 31, 42), self.shop_continue_rect, border_radius=8)
+        pygame.draw.rect(self.screen, ACCENT, self.shop_continue_rect, 2, border_radius=8)
+        continue_text = self.small_font.render("SONRAKİ BÖLÜM", True, TEXT_COLOR)
+        self.screen.blit(continue_text, (self.shop_continue_rect.centerx - continue_text.get_width() // 2, self.shop_continue_rect.centery - continue_text.get_height() // 2))
+
+    def draw_end_screen(self, title, text, show_thanks=False):
+        overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        overlay.fill((9, 11, 18, 180))
+        self.screen.blit(overlay, (0, 0))
+
+        title_text = self.title_font.render(title, True, TEXT_COLOR)
+        info = self.font.render(text, True, MUTED_COLOR)
+        score_text = self.font.render(f"Puan: {self.score}", True, ACCENT)
+        best_text = self.small_font.render(f"Rekor: {self.best_score}", True, TEXT_COLOR)
+        hint = self.small_font.render("Tekrar başlamak için Enter veya tıkla", True, TEXT_COLOR)
+
+        self.end_button_rect = pygame.Rect(280, 390, 400, 60)
+        pygame.draw.rect(self.screen, (23, 31, 42), self.end_button_rect, border_radius=12)
+        pygame.draw.rect(self.screen, ACCENT, self.end_button_rect, 2, border_radius=12)
+
+        self.screen.blit(title_text, (WIDTH // 2 - title_text.get_width() // 2, 120))
+        self.screen.blit(info, (WIDTH // 2 - info.get_width() // 2, 200))
+        self.screen.blit(score_text, (WIDTH // 2 - score_text.get_width() // 2, 245))
+        self.screen.blit(best_text, (WIDTH // 2 - best_text.get_width() // 2, 285))
+
+        if show_thanks:
+            thanks_text = self.small_font.render("Teşekkür ederiz!", True, ACCENT)
+            maker_text = self.small_font.render("Yapımcı: ÖZKUL", True, TEXT_COLOR)
+            self.screen.blit(thanks_text, (WIDTH // 2 - thanks_text.get_width() // 2, 325))
+            self.screen.blit(maker_text, (WIDTH // 2 - maker_text.get_width() // 2, 355))
+            self.screen.blit(hint, (WIDTH // 2 - hint.get_width() // 2, 430))
+        else:
+            self.screen.blit(hint, (WIDTH // 2 - hint.get_width() // 2, 360))
+
+        restart = self.font.render("YENİDEN BAŞLA", True, TEXT_COLOR)
+        self.screen.blit(restart, (self.end_button_rect.centerx - restart.get_width() // 2, self.end_button_rect.centery - restart.get_height() // 2))
+
+    def draw_pause_overlay(self):
+        overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        overlay.fill((9, 11, 18, 160))
+        self.screen.blit(overlay, (0, 0))
+
+        title = self.title_font.render("DURAKLATILDI", True, TEXT_COLOR)
+        hint = self.small_font.render("P veya Esc ile devam et", True, MUTED_COLOR)
+        self.screen.blit(title, (WIDTH // 2 - title.get_width() // 2, 220))
+        self.screen.blit(hint, (WIDTH // 2 - hint.get_width() // 2, 295))
+
+    def draw_mobile_controls(self):
+        if self.platform != "Mobil":
+            return
+
+        for name, rect in self.control_button_rects.items():
+            pressed = self.mobile_controls.get(name, False)
+            color = ACCENT if pressed else (30, 40, 48)
+            pygame.draw.rect(self.screen, color, rect, border_radius=12)
+            pygame.draw.rect(self.screen, (255, 255, 255, 120), rect, 2, border_radius=12)
+
+            center = rect.center
+            if name == "up":
+                points = [(center[0], rect.top + 12), (rect.right - 10, rect.bottom - 12), (rect.left + 10, rect.bottom - 12)]
+            elif name == "down":
+                points = [(center[0], rect.bottom - 12), (rect.right - 10, rect.top + 12), (rect.left + 10, rect.top + 12)]
+            elif name == "left":
+                points = [(rect.left + 12, center[1]), (rect.right - 12, rect.top + 10), (rect.right - 12, rect.bottom - 10)]
+            else:
+                points = [(rect.right - 12, center[1]), (rect.left + 12, rect.top + 10), (rect.left + 12, rect.bottom - 10)]
+            pygame.draw.polygon(self.screen, TEXT_COLOR, points)
+
+        sprint_pressed = self.mobile_controls.get("sprint", False)
+        sprint_color = ACCENT if sprint_pressed else (30, 40, 48)
+        pygame.draw.rect(self.screen, sprint_color, self.sprint_button_rect, border_radius=18)
+        pygame.draw.rect(self.screen, (255, 255, 255, 120), self.sprint_button_rect, 2, border_radius=18)
+        sprint_label = self.small_font.render("RUN", True, TEXT_COLOR)
+        self.screen.blit(sprint_label, (self.sprint_button_rect.centerx - sprint_label.get_width() // 2, self.sprint_button_rect.centery - sprint_label.get_height() // 2))
+
+    def run(self):
+        while self.running:
+            dt = self.clock.tick(FPS) / 1000.0
+            self.handle_events()
+            if self.state == "playing":
+                self.update(dt)
+
+            if self.state == "menu":
+                self.draw_menu()
+            elif self.state == "settings":
+                self.draw_settings()
+            elif self.state == "shop":
+                self.draw_shop()
+            elif self.state == "playing":
+                self.draw_background()
+                if self.dark_mode:
+                    self.draw_fog()
+                self.draw_hud()
+                self.draw_mobile_controls()
+            elif self.state == "paused":
+                self.draw_background()
+                if self.dark_mode:
+                    self.draw_fog()
+                self.draw_hud()
+                self.draw_mobile_controls()
+                self.draw_pause_overlay()
+            elif self.state == "win":
+                self.draw_background()
+                if self.dark_mode:
+                    self.draw_fog()
+                self.draw_hud()
+                self.draw_end_screen("KAÇTIN!", "Tüm bölümlerden kurtuldun.", show_thanks=True)
+            elif self.state == "lose":
+                self.draw_background()
+                if self.dark_mode:
+                    self.draw_fog()
+                self.draw_hud()
+                self.draw_end_screen("YAKALANDIN", "Düşman seni yakaladı.", show_thanks=False)
+
+            pygame.display.flip()
+
+        pygame.quit()
+        return
+
+
+if __name__ == "__main__":
+    try:
+        import pygame
+    except ModuleNotFoundError:
+        print("Pygame kurulu değil.")
+        print("Kurulum için:")
+        print('"C:/Users/User/AppData/Local/Programs/Python/Python314/python.exe" -m pip install pygame')
+        sys.exit(0)
+
+    Game().run()
